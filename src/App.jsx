@@ -310,11 +310,15 @@ function App() {
 
         setDownloadingUrl(url);
 
+        const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        const fileId = m && m[1];
+        const filename = fileId ? `${fileId}.png` : 'image.png';
+
         function triggerDownload(blob) {
             const blobUrl = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = blobUrl;
-            a.download = 'image.png';
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             // Delay revocation to allow mobile browsers to process the download
@@ -325,9 +329,7 @@ function App() {
         }
 
         try {
-            // Extract File ID for Google Drive links
-            const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-            const fileId = m && m[1];
+            // Extract File ID for Google Drive links (already done above)
 
             // 1. Try 'lh3' link (Google Content CDN)
             if (fileId) {
