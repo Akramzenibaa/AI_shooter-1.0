@@ -442,7 +442,7 @@
               </div>
               <input ref={fileInputRef} id="image-input" type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
               <div className="count">
-                <div className="label">Images to generate</div>
+                <div className="label">Images to generate:</div>
                 <div className="opts">
                   {[1, 2, 3, 4].map((n) => (
                     <button key={n} className={"opt " + (imgCount === n ? 'selected' : '')} onClick={() => setImgCount(n)} aria-label={`Generate ${n} images`}>{n}</button>
