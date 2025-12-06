@@ -118,13 +118,29 @@ function App() {
 
     useEffect(() => {
         if (user) return;
-        if (!window.google) return;
-        const container = document.getElementById('google-btn');
-        if (container) {
-            try { container.innerHTML = ''; } catch { }
-            try { google.accounts.id.renderButton(container, { theme: 'outline', size: 'large', shape: 'rect', text: 'signin_with' }); } catch { }
+
+        const initGoogle = () => {
+            if (!window.google || !GOOGLE_CLIENT_ID) return false;
+            try {
+                google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential, use_fedcm_for_prompt: true });
+                const container = document.getElementById('google-btn');
+                if (container) {
+                    container.innerHTML = '';
+                    google.accounts.id.renderButton(container, { theme: 'outline', size: 'large', shape: 'rect', text: 'signin_with' });
+                }
+                google.accounts.id.prompt();
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        if (!initGoogle()) {
+            const timer = setInterval(() => {
+                if (initGoogle()) clearInterval(timer);
+            }, 500);
+            return () => clearInterval(timer);
         }
-        try { google.accounts.id.prompt(); } catch { }
     }, [user]);
 
     function handleFileChange(e) {
@@ -301,8 +317,11 @@ function App() {
             a.download = 'image.png';
             document.body.appendChild(a);
             a.click();
-            window.URL.revokeObjectURL(blobUrl);
-            a.remove();
+            // Delay revocation to allow mobile browsers to process the download
+            setTimeout(() => {
+                window.URL.revokeObjectURL(blobUrl);
+                a.remove();
+            }, 1000);
         }
 
         try {
