@@ -37,6 +37,7 @@ function App() {
     const [showGetMore, setShowGetMore] = useState(false);
     const [history, setHistory] = useState([]);
     const fileInputRef = useRef(null);
+    const [downloadingUrl, setDownloadingUrl] = useState(null);
 
     useEffect(() => {
         if (user && user.email) {
@@ -289,6 +290,9 @@ function App() {
     }
     async function downloadOne(e, url) {
         if (e) e.stopPropagation();
+        if (downloadingUrl) return; // Prevent multiple clicks
+
+        setDownloadingUrl(url);
 
         function triggerDownload(blob) {
             const blobUrl = window.URL.createObjectURL(blob);
@@ -301,49 +305,57 @@ function App() {
             a.remove();
         }
 
-        // Extract File ID
-        const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-        const fileId = m && m[1];
+        try {
+            // Extract File ID for Google Drive links
+            const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+            const fileId = m && m[1];
 
-        // 1. Try 'lh3' link (Google Content CDN) - often supports CORS better for images
-        if (fileId) {
+            // 1. Try 'lh3' link (Google Content CDN)
+            if (fileId) {
+                try {
+                    const lh3Url = `https://lh3.googleusercontent.com/d/${fileId}`;
+                    const response = await fetch(lh3Url, { mode: 'cors' });
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        triggerDownload(blob);
+                        return;
+                    }
+                } catch (err) {
+                    console.warn('lh3 fetch failed', err);
+                }
+            }
+
+            // 2. Try proxy (weserv.nl)
             try {
-                // /d/ID prefix often works for direct image access
-                const lh3Url = `https://lh3.googleusercontent.com/d/${fileId}`;
-                const response = await fetch(lh3Url, { mode: 'cors' });
+                const proxyUrl = 'https://images.weserv.nl/?url=' + encodeURIComponent(url) + '&output=png';
+                const response = await fetch(proxyUrl, { mode: 'cors' });
                 if (response.ok) {
                     const blob = await response.blob();
                     triggerDownload(blob);
                     return;
                 }
             } catch (err) {
-                console.warn('lh3 fetch failed', err);
+                console.warn('Proxy fetch failed', err);
             }
-        }
 
-        // 2. Try proxy (weserv.nl)
-        try {
-            const proxyUrl = 'https://images.weserv.nl/?url=' + encodeURIComponent(url) + '&output=png';
-            const response = await fetch(proxyUrl, { mode: 'cors' });
-            if (response.ok) {
-                const blob = await response.blob();
-                triggerDownload(blob);
-                return;
+            // 3. Last Result: Direct fetch
+            try {
+                const response = await fetch(url, { mode: 'cors' });
+                if (response.ok) {
+                    const blob = await response.blob();
+                    triggerDownload(blob);
+                    return;
+                }
+            } catch (err) {
+                console.warn('Direct fetch failed', err);
             }
-        } catch (err) {
-            console.warn('Proxy fetch failed', err);
-        }
 
-        // 3. Last Result: Open in "View" mode (not download mode)
-        // This avoids the "Virus Scan" warning page and lets user Right Click -> Save
-        const viewUrl = toPreviewUrl(url);
-        const a = document.createElement('a');
-        a.href = viewUrl;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+            // 4. Fallback: Open in new tab
+            window.open(toPreviewUrl(url), '_blank');
+
+        } finally {
+            setDownloadingUrl(null);
+        }
     }
     function toPreviewUrl(url) {
         const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
@@ -464,9 +476,13 @@ function App() {
                                             }}
                                         />
                                         <button className="dl-icon" aria-label="Download image" title="Download" onClick={(e) => { e.stopPropagation(); downloadOne(e, url); }}>
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                                                <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5v-2.25a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H4.5a3 3 0 01-3-3v-2.25a.75.75 0 01.75-.75z" clipRule="evenodd" />
-                                            </svg>
+                                            {downloadingUrl === url ? (
+                                                <div className="spinner-small" style={{ width: 20, height: 20, border: '2px solid white', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                                            ) : (
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                                                    <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5v-2.25a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H4.5a3 3 0 01-3-3v-2.25a.75.75 0 01.75-.75z" clipRule="evenodd" />
+                                                </svg>
+                                            )}
                                         </button>
                                     </div>
                                 ))}
@@ -508,9 +524,13 @@ function App() {
                                     }}
                                 />
                                 <button className="dl-icon" title="Download" onClick={(e) => { e.stopPropagation(); downloadOne(e, url); }}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                                        <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5v-2.25a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H4.5a3 3 0 01-3-3v-2.25a.75.75 0 01.75-.75z" clipRule="evenodd" />
-                                    </svg>
+                                    {downloadingUrl === url ? (
+                                        <div className="spinner-small" style={{ width: 20, height: 20, border: '2px solid white', borderTop: '2px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                                    ) : (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                                            <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5v-2.25a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H4.5a3 3 0 01-3-3v-2.25a.75.75 0 01.75-.75z" clipRule="evenodd" />
+                                        </svg>
+                                    )}
                                 </button>
                             </div>
                         ))}
@@ -521,5 +541,15 @@ function App() {
         </div>
     )
 }
+
+// Add keyframes for spinner
+const style = document.createElement('style');
+style.textContent = `
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+`;
+document.head.appendChild(style);
 
 export default App
