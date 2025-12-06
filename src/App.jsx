@@ -1,0 +1,525 @@
+import React, { useState, useEffect, useRef } from 'react'
+
+const GOOGLE_CLIENT_ID = "102705984428-m1ibt0ednckschs7umrrj57hgup43j60.apps.googleusercontent.com";
+const UPLOAD_URL = "https://n8n.lbahi.digital/webhook/photo";
+const CREDITS_URL = "https://n8n.lbahi.digital/webhook/credits";
+const LS_USER_KEY = "ai_shooter_user";
+const LS_CREDITS_KEY = "ai_shooter_credits";
+const LS_HISTORY_KEY_PREFIX = "ai_shooter_history_";
+
+function App() {
+    const [imageFile, setImageFile] = useState(null);
+    const [imageSrc, setImageSrc] = useState(null);
+    const [status, setStatus] = useState("");
+    const [user, setUser] = useState(() => {
+        try {
+            const s = localStorage.getItem(LS_USER_KEY);
+            if (s) {
+                const u = JSON.parse(s);
+                if (u && u.email) return u;
+            }
+        } catch (e) { }
+        return null;
+    });
+    const [credits, setCredits] = useState(() => {
+        try {
+            const cs = localStorage.getItem(LS_CREDITS_KEY);
+            const c = cs != null ? parseInt(cs, 10) : 0;
+            return Number.isNaN(c) ? 0 : c;
+        } catch (e) { return 0; }
+    });
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [error, setError] = useState(null);
+    const [fileUrls, setFileUrls] = useState([]);
+    const [imgCount, setImgCount] = useState(4);
+    const [isSuccess, setIsSuccess] = useState(false);
+    const [selectedUrl, setSelectedUrl] = useState(null);
+    const [showGetMore, setShowGetMore] = useState(false);
+    const [history, setHistory] = useState([]);
+    const fileInputRef = useRef(null);
+
+    useEffect(() => {
+        if (user && user.email) {
+            try {
+                const saved = localStorage.getItem(LS_HISTORY_KEY_PREFIX + user.email);
+                if (saved) setHistory(JSON.parse(saved));
+                else setHistory([]);
+            } catch (e) { setHistory([]); }
+        } else {
+            setHistory([]);
+        }
+    }, [user]);
+
+    function decodeJwt(token) {
+        try {
+            const payload = token.split('.')[1];
+            const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+            return JSON.parse(json);
+        } catch (e) { return null; }
+    }
+
+    function handleGoogleCredential(response) {
+        const data = decodeJwt(response && response.credential);
+        if (data) {
+            setUser({ name: data.name, email: data.email, picture: data.picture });
+            try { localStorage.setItem(LS_USER_KEY, JSON.stringify({ name: data.name, email: data.email, picture: data.picture })); } catch { }
+            setStatus("Signed in");
+            fetchCredits(data.email);
+            try { google.accounts.id.cancel(); } catch { }
+            const container = document.getElementById('google-btn');
+            if (container) { container.innerHTML = ''; }
+        } else {
+            setStatus("Sign-in error");
+        }
+    }
+
+    function signOut() {
+        setUser(null);
+        try { localStorage.removeItem(LS_USER_KEY); } catch { }
+        try { localStorage.removeItem(LS_CREDITS_KEY); } catch { }
+        try { google.accounts.id.disableAutoSelect(); } catch { }
+        try { google.accounts.id.prompt(); } catch { }
+    }
+
+    useEffect(() => {
+        if (user) return;
+        if (!GOOGLE_CLIENT_ID || !window.google) return;
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential, use_fedcm_for_prompt: true });
+        const container = document.getElementById('google-btn');
+        if (container) {
+            google.accounts.id.renderButton(container, { theme: 'outline', size: 'large', shape: 'rect', text: 'signin_with' });
+        }
+        try { google.accounts.id.prompt(); } catch { }
+    }, [user]);
+
+    useEffect(() => {
+        try {
+            const s = localStorage.getItem(LS_USER_KEY);
+            if (s) {
+                const u = JSON.parse(s);
+                if (u && u.email) {
+                    setUser(u);
+                    const cs = localStorage.getItem(LS_CREDITS_KEY);
+                    const c = cs != null ? parseInt(cs, 10) : null;
+                    if (typeof c === 'number' && !Number.isNaN(c)) setCredits(c);
+                    fetchCredits(u.email);
+                }
+            }
+        } catch { }
+    }, []);
+
+    useEffect(() => {
+        if (!user || !window.google) return;
+        try { google.accounts.id.cancel(); } catch { }
+        const container2 = document.getElementById('google-btn');
+        if (container2) { container2.innerHTML = ''; }
+    }, [user]);
+
+    useEffect(() => {
+        if (user) return;
+        if (!window.google) return;
+        const container = document.getElementById('google-btn');
+        if (container) {
+            try { container.innerHTML = ''; } catch { }
+            try { google.accounts.id.renderButton(container, { theme: 'outline', size: 'large', shape: 'rect', text: 'signin_with' }); } catch { }
+        }
+        try { google.accounts.id.prompt(); } catch { }
+    }, [user]);
+
+    function handleFileChange(e) {
+        const file = e.target.files[0];
+        if (!file) { setImageFile(null); setImageSrc(null); return; }
+        setImageFile(file);
+        const reader = new FileReader();
+        reader.onload = () => setImageSrc(reader.result);
+        reader.readAsDataURL(file);
+    }
+    function openFilePicker() {
+        if (fileInputRef.current) fileInputRef.current.click();
+    }
+    async function fetchCredits(email) {
+        try {
+            const form = new FormData();
+            form.append("email", email || "");
+            const res = await fetch(CREDITS_URL, { method: "POST", body: form, mode: "cors" });
+            let txt = "";
+            try { txt = await res.text(); } catch { }
+            let count = null;
+            try {
+                const j = JSON.parse(txt);
+                if (typeof j?.credits === "number") count = j.credits;
+                else if (j && typeof j === "object") {
+                    const v = j.credits || j.count || j.balance;
+                    if (typeof v === "number") count = v;
+                }
+            } catch { }
+            if (count == null) {
+                const m = (txt || "").match(/(\d+)/);
+                if (m) count = parseInt(m[1], 10);
+            }
+            if (typeof count === "number" && !Number.isNaN(count)) setCredits(count);
+            try { if (typeof count === "number" && !Number.isNaN(count)) localStorage.setItem(LS_CREDITS_KEY, String(count)); } catch { }
+        } catch { }
+    }
+
+    async function sendImage() {
+        if (!user) { setStatus("Please sign in first"); setError(null); return; }
+        if (!imageFile) { setStatus("Select an image first"); setError(null); return; }
+        setStatus("Please wait...");
+        setError(null);
+        setIsGenerating(true);
+        setIsSuccess(false);
+        try {
+            const form = new FormData();
+            form.append("image", imageFile, imageFile.name);
+            form.append("email", user && user.email ? user.email : "");
+            form.append("count", String(imgCount));
+            const res = await fetch(UPLOAD_URL, { method: "POST", body: form, mode: "cors" });
+            const urlsSet = new Set();
+            function pushUrl(url) {
+                if (!url) return;
+                urlsSet.add(url);
+            }
+            function extractFromText(t) {
+                const ids = t.match(/"id"\s*:\s*"([a-zA-Z0-9_-]{20,})"/g) || [];
+                for (const s of ids) {
+                    const m = s.match(/"id"\s*:\s*"([a-zA-Z0-9_-]{20,})"/);
+                    if (m && m[1]) pushUrl(`https://drive.google.com/uc?export=view&id=${m[1]}`);
+                }
+                const wcs = t.match(/"webContentLink"\s*:\s*"([^"]+)"/g) || [];
+                for (const s of wcs) {
+                    const m = s.match(/"webContentLink"\s*:\s*"([^"]+)"/);
+                    if (m && m[1]) pushUrl(m[1].replace("export=download", "export=view"));
+                }
+                const wvs = t.match(/"webViewLink"\s*:\s*"([^"]+)"/g) || [];
+                for (const s of wvs) {
+                    const m = s.match(/"webViewLink"\s*:\s*"([^"]+)"/);
+                    if (m && m[1]) {
+                        const mm = m[1].match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || m[1].match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                        if (mm) pushUrl(`https://drive.google.com/uc?export=view&id=${mm[1]}`);
+                    }
+                }
+            }
+            try {
+                if (res.body) {
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buf = "";
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        buf += decoder.decode(value, { stream: true });
+                        const lower = buf.toLowerCase();
+                        if (lower.includes("free trial allredy used")) {
+                            setIsGenerating(false);
+                            setStatus("");
+                            setError(
+                                <>
+                                    You ran out of credits , please contact us on <a href="https://wa.me/+21656358478" target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb" }}>Whatsapp</a> or <a href="https://www.tiktok.com/@ai_shooter_bot" target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb" }}>Tiktok</a> to purchase more
+                                </>
+                            );
+                            setIsSuccess(false);
+                            return;
+                        }
+                        if (lower.includes("please upload a clearer image")) {
+                            setIsGenerating(false);
+                            setStatus("");
+                            setError("please upload a clearer image");
+                            setIsSuccess(false);
+                            return;
+                        }
+                        extractFromText(buf);
+                        if (urlsSet.size >= imgCount) break;
+                    }
+                } else {
+                    let txt = "";
+                    try { txt = await res.text(); } catch { }
+                    extractFromText(txt);
+                }
+            } catch (streamErr) {
+                setStatus("Please wait...");
+            }
+            if (urlsSet.size >= imgCount) {
+                const arr = Array.from(urlsSet).slice(0, imgCount);
+                setFileUrls(prev => [...prev, ...arr]);
+                setIsGenerating(false);
+                setStatus("Images generated successfully");
+                setIsSuccess(true);
+                try {
+                    setCredits((prev) => {
+                        const base = (typeof prev === 'number' && !Number.isNaN(prev)) ? prev : 0;
+                        const next = Math.max(0, base - arr.length);
+                        try { localStorage.setItem(LS_CREDITS_KEY, String(next)); } catch { }
+                        return next;
+                    });
+                    setHistory(prev => {
+                        const next = [...arr, ...prev];
+                        if (user && user.email) {
+                            try { localStorage.setItem(LS_HISTORY_KEY_PREFIX + user.email, JSON.stringify(next)); } catch { }
+                        }
+                        return next;
+                    });
+                } catch { }
+            } else if (urlsSet.size === 0) {
+                setIsSuccess(false);
+                setStatus("No images found in response");
+                setIsGenerating(false);
+            } else if (urlsSet.size < imgCount) {
+                setIsSuccess(false);
+                setStatus(`Received ${urlsSet.size} of ${imgCount} images`);
+                setIsGenerating(false);
+            }
+        } catch (e) {
+            setStatus("");
+            setError("Upload failed");
+            setIsGenerating(false);
+            setIsSuccess(false);
+        }
+    }
+
+    function toDownloadUrl(url) {
+        const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        const id = m && m[1];
+        const rk = (url.match(/[?&]resourcekey=([a-zA-Z0-9_-]+)/) || [])[1];
+        if (id) {
+            const base = `https://drive.google.com/uc?export=download&id=${id}`;
+            return rk ? `${base}&resourcekey=${rk}` : base;
+        }
+        return url.replace('export=view', 'export=download');
+    }
+    async function downloadOne(e, url) {
+        if (e) e.stopPropagation();
+
+        function triggerDownload(blob) {
+            const blobUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = 'image.png';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(blobUrl);
+            a.remove();
+        }
+
+        // Extract File ID
+        const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        const fileId = m && m[1];
+
+        // 1. Try 'lh3' link (Google Content CDN) - often supports CORS better for images
+        if (fileId) {
+            try {
+                // /d/ID prefix often works for direct image access
+                const lh3Url = `https://lh3.googleusercontent.com/d/${fileId}`;
+                const response = await fetch(lh3Url, { mode: 'cors' });
+                if (response.ok) {
+                    const blob = await response.blob();
+                    triggerDownload(blob);
+                    return;
+                }
+            } catch (err) {
+                console.warn('lh3 fetch failed', err);
+            }
+        }
+
+        // 2. Try proxy (weserv.nl)
+        try {
+            const proxyUrl = 'https://images.weserv.nl/?url=' + encodeURIComponent(url) + '&output=png';
+            const response = await fetch(proxyUrl, { mode: 'cors' });
+            if (response.ok) {
+                const blob = await response.blob();
+                triggerDownload(blob);
+                return;
+            }
+        } catch (err) {
+            console.warn('Proxy fetch failed', err);
+        }
+
+        // 3. Last Result: Open in "View" mode (not download mode)
+        // This avoids the "Virus Scan" warning page and lets user Right Click -> Save
+        const viewUrl = toPreviewUrl(url);
+        const a = document.createElement('a');
+        a.href = viewUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+    function toPreviewUrl(url) {
+        const m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/) || url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        if (m && m[1]) return `https://drive.google.com/uc?export=view&id=${m[1]}`;
+        return url;
+    }
+    function onImageClick(url) { setSelectedUrl(toPreviewUrl(url)); }
+    function closeModal() { setSelectedUrl(null); }
+    useEffect(() => {
+        function onKey(e) { if (e.key === 'Escape') closeModal(); }
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, []);
+
+    return (
+        <div className="page">
+            <header className="topbar">
+                <div className="title"><img src="/favicon.ico" alt="AI Shooter Icon" className="app-icon" /> AI Shooter</div>
+                <div className="signin">
+                    {user ? (
+                        <>
+                            <div className="credits">
+                                <span className="credit-count">Credits: {credits != null ? credits : 0}</span>
+                                <button className="getmore" aria-label="Get More" onClick={() => setShowGetMore((v) => !v)}>✨ Get More</button>
+                                {showGetMore && (
+                                    <div className="getmore-panel">
+                                        <div className="getmore-title">Contact us to get more credits</div>
+                                        <div className="getmore-icons">
+                                            <a className="icon-link tiktok" href="https://www.tiktok.com/@ai_shooter_bot" target="_blank" rel="noopener noreferrer" aria-label="TikTok">
+                                                <img src="https://cdn.simpleicons.org/tiktok/ffffff" alt="TikTok" />
+                                            </a>
+                                            <a className="icon-link whatsapp" href="https://wa.me/+21656358478" target="_blank" rel="noopener noreferrer" aria-label="WhatsApp">
+                                                <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" alt="WhatsApp" />
+                                            </a>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="user">
+                                <img src={user.picture} alt={user.name} />
+                                <span>{user.name}</span>
+                                <button className="btn small" onClick={signOut} aria-label="Sign out">Sign out</button>
+                            </div>
+                        </>
+                    ) : (
+                        <div id="google-btn"></div>
+                    )}
+                </div>
+            </header>
+            <main className="content">
+                <div className="main-area">
+                    <section className="hero">
+                        <h1>AI Photo Shooter</h1>
+                        <p>Upload an image of your product and get 8 enhanced photos</p>
+                        {!user && <p2>Make sure you are logged in first</p2>}
+                    </section>
+                    <section className="card uploader">
+                        <div
+                            className={"dropzone " + (isGenerating ? "disabled" : "")}
+                            role="button"
+                            tabIndex={0}
+                            aria-label="Upload image"
+                            aria-disabled={isGenerating}
+                            onClick={!isGenerating ? openFilePicker : undefined}
+                            onKeyDown={(e) => { if (!isGenerating && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openFilePicker(); } }}
+                        >
+                            {imageSrc ? (
+                                <img className="dz-preview" src={imageSrc} alt="Selected image" />
+                            ) : (
+                                <>
+                                    <div className="cloud">⬆️</div>
+                                    <div className="hint">Click to select an image</div>
+                                </>
+                            )}
+                        </div>
+                        <input ref={fileInputRef} id="image-input" type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} disabled={isGenerating} />
+                        <div className="count">
+                            <div className="label">Images to generate:</div>
+                            <div className="opts">
+                                {[1, 2, 3, 4].map((n) => (
+                                    <button key={n} className={"opt " + (imgCount === n ? 'selected' : '')} onClick={() => !isGenerating && setImgCount(n)} disabled={isGenerating} aria-label={`Generate ${n} images`}>{n}</button>
+                                ))}
+                            </div>
+                            <div className="deduct-msg">-{imgCount} credits</div>
+                        </div>
+                        <button className="generate-btn" onClick={sendImage} disabled={isGenerating || !imageFile || !user} aria-disabled={isGenerating || !imageFile || !user} aria-label="Send image" title={!user ? 'Sign in to send' : ''}>{isGenerating ? 'Generating...' : 'Generate'}</button>
+                        {error && <div className="error-msg" role="alert">{error}</div>}
+                        {status && <div className={"status " + (isSuccess ? 'success' : '')} role="status" aria-live="polite" aria-atomic="true">{status}</div>}
+                    </section>
+                    {isGenerating && (
+                        <section className="card generating">
+                            <div className="spinner" role="status" aria-busy="true" aria-label="Loading"></div>
+                            <div className="gen-title">Your photos are being generated...</div>
+                        </section>
+                    )}
+                    {fileUrls.length > 0 && (
+                        <section className="card results">
+                            <div className="results-header">
+                                <h3>Generated Images</h3>
+                            </div>
+                            <div className="gallery">
+                                {fileUrls.map((url) => (
+                                    <div className="thumb-wrap" key={url}>
+                                        <img
+                                            src={url}
+                                            alt="Generated image"
+                                            loading="lazy"
+                                            onClick={() => onImageClick(url)}
+                                            onError={(e) => {
+                                                const s = e.currentTarget.src;
+                                                const m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/) || s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                                if (m && m[1]) {
+                                                    e.currentTarget.onerror = null;
+                                                    e.currentTarget.src = `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`;
+                                                } else {
+                                                    e.currentTarget.style.display = 'none';
+                                                }
+                                            }}
+                                        />
+                                        <button className="dl-icon" aria-label="Download image" title="Download" onClick={(e) => { e.stopPropagation(); downloadOne(e, url); }}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                                                <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5v-2.25a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H4.5a3 3 0 01-3-3v-2.25a.75.75 0 01.75-.75z" clipRule="evenodd" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+                    {selectedUrl && (
+                        <div className="modal" role="dialog" aria-modal="true" onClick={closeModal}>
+                            <img src={selectedUrl} alt="Full view" onClick={(e) => e.stopPropagation()} onError={(e) => {
+                                const s = e.currentTarget.src;
+                                const m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/) || s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                if (m && m[1]) e.currentTarget.src = `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`;
+                            }} />
+                        </div>
+                    )}
+
+                </div>
+                <aside className="history-sidebar">
+                    <div className="history-header">
+                        <div className="history-title">History</div>
+                        <div className="history-subtitle">Locally saved</div>
+                    </div>
+                    <div className="history-grid">
+                        {history.map((url, i) => (
+                            <div key={i} className="history-item" onClick={() => onImageClick(url)}>
+                                <img
+                                    src={url}
+                                    alt="History"
+                                    loading="lazy"
+                                    onError={(e) => {
+                                        const s = e.currentTarget.src;
+                                        const m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/) || s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                        if (m && m[1]) {
+                                            e.currentTarget.onerror = null;
+                                            e.currentTarget.src = `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000`;
+                                        } else {
+                                            e.currentTarget.style.display = 'none';
+                                        }
+                                    }}
+                                />
+                                <button className="dl-icon" title="Download" onClick={(e) => { e.stopPropagation(); downloadOne(e, url); }}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                                        <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5v-2.25a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H4.5a3 3 0 01-3-3v-2.25a.75.75 0 01.75-.75z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    {history.length === 0 && <div className="history-empty">No history yet</div>}
+                </aside>
+            </main>
+        </div>
+    )
+}
+
+export default App
