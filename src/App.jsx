@@ -430,7 +430,7 @@ function App() {
                 <div className="main-area">
                     <section className="hero">
                         <h1>AI Photo Shooter</h1>
-                        <p>Upload an image of your product and get 8 enhanced photos</p>
+                        <p>Upload an image of your product and get enhanced photos</p>
                         {!user && <p2>Make sure you are logged in first</p2>}
                     </section>
                     <section className="card uploader">
