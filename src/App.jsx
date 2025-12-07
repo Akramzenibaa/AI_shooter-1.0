@@ -256,11 +256,17 @@ function App() {
             } catch (streamErr) {
                 setStatus("Please wait...");
             }
-            if (urlsSet.size >= imgCount) {
-                const arr = Array.from(urlsSet).slice(0, imgCount);
+            if (urlsSet.size > 0) {
+                const arr = Array.from(urlsSet);
                 setFileUrls(prev => [...prev, ...arr]);
                 setIsGenerating(false);
-                setStatus("Images generated successfully");
+
+                if (urlsSet.size >= imgCount) {
+                    setStatus("Images generated successfully");
+                } else {
+                    setStatus(`Generated ${urlsSet.size} of ${imgCount} images`);
+                }
+
                 setIsSuccess(true);
                 try {
                     setCredits((prev) => {
@@ -277,13 +283,9 @@ function App() {
                         return next;
                     });
                 } catch { }
-            } else if (urlsSet.size === 0) {
+            } else {
                 setIsSuccess(false);
                 setStatus("No images found in response");
-                setIsGenerating(false);
-            } else if (urlsSet.size < imgCount) {
-                setIsSuccess(false);
-                setStatus(`Received ${urlsSet.size} of ${imgCount} images`);
                 setIsGenerating(false);
             }
         } catch (e) {
